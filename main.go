@@ -5,15 +5,16 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"k8s.io/client-go/tools/clientcmd"
 	"net/http"
 	"time"
 
+	//v1 "github.com/labring/sealos/controllers/pkg/notification/api/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/tools/clientcmd"
 )
 
 const (
@@ -39,6 +40,7 @@ type FeishuMessage struct {
 func main() {
 	initClient()
 	database_monitor()
+	//CreateNotification("ns-hkfnwdfz", "test", "updating")
 }
 
 func initClient() {
@@ -103,6 +105,7 @@ func checkDatabases(gvr schema.GroupVersionResource) {
 			_, debt := checkQuota(namespace)
 			if !debt {
 				database_message += fmt.Sprintf("%-50s %-50s %-50s\n", name, status, namespace)
+				CreateNotification(namespace, name, status)
 				continue
 			}
 
@@ -168,4 +171,46 @@ func sendFeishuNotification(database_message string) error {
 		fmt.Println("Alert sent successfully")
 	}
 	return nil
+}
+
+func CreateNotification(namespace string, name, status string) {
+
+	gvr := schema.GroupVersionResource{
+		Group:    "notification.sealos.io",
+		Version:  "v1",
+		Resource: "notifications",
+	}
+
+	now := time.Now().UTC().Unix()
+	message := "database : " + name + " is " + status + ". Please check in time."
+	notification := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "notification.sealos.io/v1",
+			"kind":       "Notification",
+			"metadata": map[string]interface{}{
+				"name": "database-monitor-notification",
+			},
+			"spec": map[string]interface{}{
+				"title":        "Database Exception",
+				"message":      message,
+				"timestamp":    now,
+				"from":         "database-monitor-cronjob",
+				"importance":   "High",
+				"desktopPopup": true,
+				"i18ns": map[string]interface{}{
+					"en": map[string]interface{}{
+						"title":   "English Title",
+						"message": "English Message",
+						"from":    "User A",
+					},
+				},
+			},
+		},
+	}
+
+	// 使用客户端和 GVR 创建 CRD
+	_, err := dynamicClient.Resource(gvr).Namespace(namespace).Create(context.TODO(), notification, metav1.CreateOptions{})
+	if err != nil {
+		fmt.Println(err.Error())
+	}
 }
